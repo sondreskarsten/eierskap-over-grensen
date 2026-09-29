@@ -129,6 +129,14 @@ a.lk:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 .controls { position: sticky; top: 0; z-index: 5; box-shadow: 0 4px 12px rgba(0,0,0,.06); }
 @media print { .controls { position: static; box-shadow: none; } }
+@media (max-width: 860px) {
+  .controls { position: static; box-shadow: none; flex-wrap: nowrap; flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 12px; }
+  .controls .ctl { grid-template-columns: 72px minmax(0, 1fr); align-items: center; gap: 8px; }
+  .controls .seg { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0; }
+  .controls .seg::-webkit-scrollbar { display: none; }
+  .controls .seg button { white-space: nowrap; flex: none; padding: 5px 9px; }
+  .controls .eyebrow { font-size: 10px; }
+}
 </style>
 
 <div class="wrap">
