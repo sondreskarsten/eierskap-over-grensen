@@ -321,12 +321,16 @@ for (const r of DATA.rows) {
 const thead = document.getElementById("thead");
 COLS.forEach(c => { const th = document.createElement("th"); if (c.r) th.className = "r"; const b = document.createElement("button"); b.type = "button"; b.textContent = c.l; b.onclick = () => { state.sort = { k: c.k, dir: state.sort.k === c.k ? -state.sort.dir : (c.r ? -1 : 1) }; renderTable(); }; th.appendChild(b); thead.appendChild(th); });
 
-function renderTable() {
+function tableRows() {
   let rows = baseRows().filter(r => !state.sel || regionKey(r.kn) === state.sel);
   if (state.q) rows = rows.filter(r => [r.n, r.o, r.km, r.u, land(r.c), r.gn, r.g].join(" ").toLowerCase().includes(state.q));
   const { k, dir } = state.sort;
   const key = k === "kn" ? "km" : k;
-  rows.sort((a, b) => { const x = a[key], y = b[key]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+  return rows.sort((a, b) => { const x = a[key], y = b[key]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+}
+function renderTable() {
+  const rows = tableRows();
+  const { k, dir } = state.sort;
   document.getElementById("rowCount").textContent = `${nf.format(rows.length)} rader`;
   [...thead.children].forEach((th, i) => th.setAttribute("aria-sort", COLS[i].k === k ? (dir > 0 ? "ascending" : "descending") : "none"));
   const snapLbl = y => "Snitt " + DATA.emp_snaps[y].map(s => s.split("-").reverse().join(".")).join(" og ");
@@ -352,5 +356,31 @@ function renderTable() {
   more.textContent = `Vis flere (${nf.format(Math.min(100, rows.length - state.show))} av ${nf.format(rows.length - state.show)} gjenstående)`;
 }
 document.getElementById("more").onclick = () => { state.show += 100; renderTable(); };
+
+const CSV_COLS = [
+  ["aar", r => r.y], ["type", r => r.t], ["orgnr", r => r.o], ["selskap", r => r.n],
+  ["kommunenr", r => r.kn], ["kommune", r => r.km], ["fylke", r => DATA.fylker[r.f] || ""],
+  ["aga_sone_hovedenhet", r => r.z], ["aga_sats_hovedenhet", r => r.z ? RATE[r.z] : ""], ["andre_soner_med_ansatte", r => r.zu.join(", ")],
+  ["ansatte_2024", r => r.e2024], ["ansatte_2025", r => r.e2025], ["ansatte_2026", r => r.e2026], ["endring_til_2026_pst", r => r.dp],
+  ["aga_stotte_2026_nok", r => r.da], ["kontrollerende_eier", r => r.u], ["eiertype", r => r.p ? "person" : "selskap"],
+  ["land", r => land(r.c)], ["landkode", r => r.c], ["eierandel_pst", r => r.pct],
+  ["norsk_konserntopp_orgnr", r => r.d > 0 ? r.g : ""], ["norsk_konserntopp", r => r.d > 0 ? (r.gn || "") : ""], ["nivaaer_til_konserntopp", r => r.d],
+];
+function csvCell(v) {
+  if (v == null || (typeof v === "number" && !isFinite(v))) return "";
+  if (typeof v === "number") return String(Math.round(v * 10) / 10).replace(".", ",");
+  const t = String(v);
+  return /[;"\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+}
+function downloadCsv(rows, name) {
+  const lines = [CSV_COLS.map(c => c[0]).join(";"), ...rows.map(r => CSV_COLS.map(c => csvCell(c[1](r))).join(";"))];
+  const blob = new Blob(["\ufeff" + lines.join("\r\n")], { type: "text/csv;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+document.getElementById("dlSel").onclick = () => downloadCsv(tableRows(), "eierskap_over_grensen_utvalg.csv");
+document.getElementById("dlAll").onclick = () => downloadCsv(DATA.rows, "eierskap_over_grensen_alle.csv");
 render();
 </script>

@@ -107,6 +107,9 @@ label.chk { display: inline-flex; gap: 7px; align-items: center; font-size: 13px
 .chip { display: inline-flex; gap: 6px; align-items: center; background: var(--surface-2); border-radius: 999px; padding: 3px 4px 3px 10px; font-size: 12px; }
 .chip button { border: 0; background: var(--surface); color: var(--ink); border-radius: 999px; width: 20px; height: 20px; cursor: pointer; font-size: 12px; line-height: 1; }
 .tscroll { overflow-x: auto; }
+.dl { font: inherit; font-size: 13px; background: var(--surface-2); color: var(--ink); border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; cursor: pointer; white-space: nowrap; }
+.dl:hover { border-color: var(--ink-3); }
+.dl:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; min-width: 980px; }
 th { text-align: left; font-weight: 600; color: var(--ink-2); border-bottom: 1px solid var(--line); padding: 0; white-space: nowrap; }
 th button { font: inherit; color: inherit; background: none; border: 0; padding: 7px 8px; cursor: pointer; width: 100%; text-align: inherit; }
@@ -192,6 +195,8 @@ a.lk:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
         <span id="fyChip"></span>
         <label class="eyebrow" for="q" style="position:absolute;left:-9999px">Søk</label>
         <input type="search" id="q" placeholder="Søk selskap, orgnr, kommune, eier, land">
+        <button type="button" class="dl" id="dlSel" title="Radene i tabellen med gjeldende filtre, region og søk">Last ned utvalg (CSV)</button>
+        <button type="button" class="dl" id="dlAll" title="Alle 2 736 rader uten filtre">Last ned alle (CSV)</button>
       </div>
     </div>
     <div class="tscroll"><table id="tbl"><thead><tr id="thead"></tr></thead><tbody id="tbody"></tbody></table></div>
