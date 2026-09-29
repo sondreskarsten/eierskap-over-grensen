@@ -1,0 +1,356 @@
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+<script>
+const DATA = __DATA__;
+const GEO_F = __GEOF__;
+const GEO_K = __GEOK__;
+
+const TYPES = [
+  { k: "Solgt til utenlandsk eier", short: "Solgt", c: "var(--s1)" },
+  { k: "Kjøpt inn i utenlandsk konsern", short: "Kjøpt inn i konsern", c: "var(--s2)" },
+  { k: "Eier flyttet utenlands", short: "Eier flyttet", c: "var(--s3)" },
+];
+const TYPEC = Object.fromEntries(TYPES.map(t => [t.k, t.c]));
+const LAND = { SE:"Sverige", DK:"Danmark", FI:"Finland", GB:"Storbritannia", DE:"Tyskland", NL:"Nederland", LU:"Luxembourg", CH:"Sveits", US:"USA", FR:"Frankrike", ES:"Spania", IT:"Italia", BE:"Belgia", PL:"Polen", LT:"Litauen", CY:"Kypros", AE:"De forente arabiske emirater", SG:"Singapore", IE:"Irland", AT:"Østerrike", CA:"Canada", NO:"Norge", PT:"Portugal", CZ:"Tsjekkia", EE:"Estland", LV:"Latvia", IS:"Island", JP:"Japan", KR:"Sør-Korea", CN:"Kina", HK:"Hongkong", AU:"Australia", MT:"Malta", GR:"Hellas", HU:"Ungarn", TH:"Thailand", BR:"Brasil", IN:"India", JE:"Jersey", GG:"Guernsey", IM:"Isle of Man", VG:"Jomfruøyene (GB)", KY:"Caymanøyene", BM:"Bermuda", MC:"Monaco", LI:"Liechtenstein", ZA:"Sør-Afrika", TR:"Tyrkia", UA:"Ukraina", RU:"Russland" };
+const land = c => c ? (LAND[c] || c) : "Ukjent";
+const nf = new Intl.NumberFormat("nb-NO");
+const STOTTE = o => `https://stotte.brreg.no/nb/oppslag/stoettetildeling?searchField=${o}&stoetteinstrument=stoetteinstrumenttype.skatteEllerAvgiftsFritak`;
+const KOM = DATA.kommuner;
+const zoneOf = k => (KOM[k] && KOM[k].z) || "I/Ia";
+const RATE = { "I/Ia": "14,1 %; Ia 10,6 % inntil fribeløp", "II": "10,6 %", "III": "6,4 %", "IV": "5,1 %", "IVa": "7,9 %", "V": "0 %", "delt": "flere satser" };
+
+for (const r of DATA.rows) {
+  const h = DATA.emp_hist[r.o] || {};
+  for (const y of DATA.emp_years) r["e" + y] = h[y] ? d3.sum(h[y], x => x[1]) : 0;
+  r.e = r.e || DATA.emp_years.some(y => r["e" + y] > 0);
+  r.b = r["e" + r.y]; r.af = r.e2026;
+  r.dp = r.b > 0 && r.af != null ? (r.af / r.b - 1) * 100 : null;
+}
+
+const METRICS = [
+  { k: "cos", abs: "Antall selskaper", rel: "Andel av selskapene i regionen" },
+  { k: "own", abs: "Unike kontrollerende eiere", rel: "Andel av eierne i regionen" },
+  { k: "emp", abs: "Ansatte 2026", rel: "Andel av ansatte i regionen 2026" },
+  { k: "dlt", abs: "Endring i ansatte fra bevegelsesåret til 2026 (%)", rel: "Endring i ansatte til 2026 mot regionen (prosentpoeng)" },
+  { k: "da", abs: "AGA-støtte 2026 (NOK)", rel: "Andel av regionens AGA-støtte 2026" },
+];
+const LEVELS = [{ v: "f", l: "Fylke" }, { v: "z", l: "AGA-sone" }, { v: "k", l: "Kommune" }];
+
+const pct = (v, d = 2) => v == null || !isFinite(v) ? "–" : (v * 100).toFixed(d).replace(".", ",") + " %";
+const pp = v => v == null || !isFinite(v) ? "–" : (v > 0 ? "+" : "") + v.toFixed(1).replace(".", ",") + " pp";
+const dp = v => v == null || !isFinite(v) ? "–" : (v > 0 ? "+" : "") + v.toFixed(1).replace(".", ",") + " %";
+const nok = v => v == null || isNaN(v) ? "–" : v >= 1e9 ? (v/1e9).toFixed(1).replace(".", ",") + " mrd" : v >= 1e6 ? (v/1e6).toFixed(1).replace(".", ",") + " mill" : v >= 1e3 ? nf.format(Math.round(v/1e3)) + " k" : nf.format(Math.round(v));
+function fmtVal(v, m, rel) {
+  if (v == null || !isFinite(v)) return "–";
+  if (m === "dlt") return rel ? pp(v) : dp(v);
+  if (rel) return pct(v, v < 0.001 ? 3 : 2);
+  if (m === "da") return nok(v);
+  return nf.format(Math.round(v));
+}
+
+const state = { year: "all", type: "all", metric: "cos", emp: false, rel: true, level: "f", sel: null, q: "", sort: { k: "af", dir: -1 }, show: 60 };
+
+function seg(el, items, key, after) {
+  el.innerHTML = "";
+  items.forEach(it => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(state[key] === it.v));
+    b.innerHTML = (it.c ? `<span class="dot" style="background:${it.c}"></span>` : "") + it.l;
+    b.onclick = () => { state[key] = it.v; state.show = 60; if (after) after(); seg(el, items, key, after); render(); };
+    el.appendChild(b);
+  });
+}
+seg(document.getElementById("yearSeg"), [{v:"all",l:"Begge"},{v:2024,l:"2024"},{v:2025,l:"2025"}], "year");
+seg(document.getElementById("typeSeg"), [{v:"all",l:"Alle"}, ...TYPES.map(t => ({v:t.k, l:t.short, c:t.c}))], "type");
+seg(document.getElementById("levelSeg"), LEVELS, "level", () => { state.sel = null; drawMap(); });
+const SHORT = { cos: "Selskaper", own: "Eiere", emp: "Ansatte 2026", dlt: "Endring i ansatte", da: "AGA-støtte" };
+const metricItems = METRICS.map(m => ({ v: m.k, l: SHORT[m.k] }));
+function setMetric(k) { if (state.metric === k) return; state.metric = k; seg(document.getElementById("metricSeg"), metricItems, "metric"); render(); }
+seg(document.getElementById("metricSeg"), metricItems, "metric");
+document.addEventListener("keydown", e => {
+  if (e.target.closest && e.target.closest("input, textarea, select")) return;
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  const i = "12345".indexOf(e.key); if (i >= 0) setMetric(METRICS[i].k);
+});
+document.getElementById("empOnly").onchange = e => { state.emp = e.target.checked; state.show = 60; render(); };
+document.getElementById("q").oninput = e => { state.q = e.target.value.trim().toLowerCase(); state.show = 60; renderTable(); };
+
+const years = () => state.year === "all" ? [2024, 2025] : [state.year];
+const baseRows = () => DATA.rows.filter(r =>
+  (state.year === "all" || r.y === state.year) && (state.type === "all" || r.t === state.type) && (!state.emp || r.e));
+
+function regionKey(knr, lvl = state.level) {
+  if (!knr) return null;
+  const f = knr.slice(0, 2);
+  if (!DATA.fylker[f]) return null;
+  if (lvl === "f") return f;
+  if (lvl === "k") return knr;
+  return zoneOf(knr);
+}
+function regionName(key, lvl = state.level) {
+  if (!key) return "";
+  if (lvl === "f") return DATA.fylker[key];
+  if (lvl === "k") return (KOM[key] && KOM[key].n) || key;
+  return key === "delt" ? "Delte kommuner (flere satser)" : `Sone ${key} (${RATE[key]})`;
+}
+function allKeys(lvl = state.level) {
+  if (lvl === "f") return Object.keys(DATA.fylker);
+  if (lvl === "k") return Object.keys(KOM);
+  return [...new Set(Object.keys(KOM).map(k => regionKey(k, "z")))].filter(Boolean);
+}
+const popKey = key => (state.level === "f" ? "f:" : state.level === "k" ? "k:" : "z:") + key;
+function popObjs(key) {
+  if (state.level !== "z") return [DATA.pop[popKey(key)] || {}];
+  return Object.entries(DATA.pop).filter(([k]) => k.startsWith("z:") && k.split(":")[2] === key).map(([, v]) => v);
+}
+function popVal(key, what) {
+  return d3.sum(popObjs(key), p => d3.sum(years(), y => p[`${what}${state.emp ? "_e" : ""}_${y}`] || 0));
+}
+function baseEmp(knrs, which) {
+  return d3.sum(years(), y => { const s = which === 0 ? String(y) : "2026"; return d3.sum(knrs, k => (DATA.base_hist[k] || {})[s] || 0); });
+}
+const knrsOf = key => Object.keys(KOM).filter(k => regionKey(k) === key);
+
+function aggregate(rows) {
+  const A = {};
+  for (const key of allKeys()) A[key] = { cos: 0, owners: new Set(), emp_b: 0, emp_a: 0, da: 0, daSeen: new Set() };
+  for (const r of rows) {
+    const key = regionKey(r.kn);
+    if (key && A[key]) {
+      const a = A[key]; a.cos++; a.owners.add(r.u + "|" + r.c);
+      if (r.da && !a.daSeen.has(r.o)) { a.da += r.da; a.daSeen.add(r.o); }
+    }
+    const sb = String(r.y), sa = "2026";
+    const h = DATA.emp_hist[r.o] || {};
+    for (const [k, n] of h[sb] || []) { const kk = regionKey(k); if (kk && A[kk]) A[kk].emp_b += n; }
+    for (const [k, n] of h[sa] || []) { const kk = regionKey(k); if (kk && A[kk]) A[kk].emp_a += n; }
+  }
+  const out = {};
+  for (const [key, a] of Object.entries(A)) {
+    const knrs = knrsOf(key);
+    const popCos = popVal(key, "cos"), popOwn = popVal(key, "own");
+    const baseA = baseEmp(knrs, 1), baseB = baseEmp(knrs, 0);
+    const daTot = d3.sum(knrs, k => (KOM[k] || {}).da || 0);
+    const dMoved = a.emp_b > 0 ? (a.emp_a / a.emp_b - 1) * 100 : null;
+    const dBase = baseB > 0 ? (baseA / baseB - 1) * 100 : null;
+    out[key] = {
+      n: { cos: a.cos, own: a.owners.size, emp: a.emp_a, dlt: dMoved, da: a.da },
+      d: { cos: popCos, own: popOwn, emp: baseA / years().length, da: daTot },
+      r: { cos: popCos ? a.cos / popCos : null, own: popOwn ? a.owners.size / popOwn : null, emp: baseA ? a.emp_a / (baseA / years().length) : null,
+           dlt: dMoved != null && dBase != null ? dMoved - dBase : null, da: daTot ? a.da / daTot : null },
+      emp_b: a.emp_b, emp_a: a.emp_a, dBase,
+    };
+  }
+  return out;
+}
+const valOf = (a, m) => state.rel ? a.r[m] : a.n[m];
+const absTxt = (v, m) => v == null || !isFinite(v) ? "–" : m === "da" ? nok(v) : m === "dlt" ? dp(v) : nf.format(Math.round(v));
+const both = (a, m) => `${fmtVal(a.r[m], m, true)} (${absTxt(a.n[m], m)})`;
+
+const tip = document.getElementById("tip");
+function showTip(ev, html) { tip.innerHTML = html; tip.hidden = false; moveTip(ev); }
+function moveTip(ev) { const w = tip.offsetWidth, h = tip.offsetHeight; let x = ev.clientX + 14, y = ev.clientY + 14; if (x + w > innerWidth - 8) x = ev.clientX - w - 14; if (y + h > innerHeight - 8) y = ev.clientY - h - 14; tip.style.left = x + "px"; tip.style.top = y + "px"; }
+const hideTip = () => { tip.hidden = true; };
+
+const W = 520, H = 640;
+const svg = d3.select("#map").append("svg").attr("viewBox", `0 0 ${W} ${H}`).attr("role", "img").attr("aria-label", "Kart");
+const proj = d3.geoTransverseMercator().rotate([-15, -65]).fitExtent([[10, 10], [W - 10, H - 10]], GEO_F);
+const path = d3.geoPath(proj);
+const gFill = svg.append("g"), gOutline = svg.append("g").attr("pointer-events", "none");
+let paths, current = {};
+function featKey(d) { return state.level === "f" ? d.properties.f : regionKey(d.properties.k); }
+function tipHtml(key) {
+  const a = current[key]; if (!a) return `<b>${regionName(key)}</b>Ingen data`;
+  const m = state.metric, ml = METRICS.find(x => x.k === m)[state.rel ? "rel" : "abs"];
+  const lines = [`<b>${regionName(key)}</b>${ml}: <span class="num">${both(a, m)}</span>`];
+  if (m === "dlt") lines.push(`Selskapene: <span class="num">${nf.format(Math.round(a.emp_b))} → ${nf.format(Math.round(a.emp_a))}</span> (${dp(a.n.dlt)})`, `Regionen: <span class="num">${dp(a.dBase)}</span>`);
+  else if (m === "da") lines.push(`<span class="num">${nok(a.n.da)}</span> av <span class="num">${nok(a.d.da)}</span>`);
+  else lines.push(`<span class="num">${nf.format(Math.round(a.n[m]))}</span> av <span class="num">${nf.format(Math.round(a.d[m]))}</span>`);
+  return lines.join("<br>");
+}
+function drawMap() {
+  gFill.selectAll("*").remove(); gOutline.selectAll("*").remove();
+  const geo = state.level === "f" ? GEO_F : GEO_K;
+  paths = gFill.selectAll("path").data(geo.features).join("path").attr("class", "fy").attr("d", path)
+    .on("mousemove", (ev, d) => showTip(ev, tipHtml(featKey(d))))
+    .on("mouseleave", hideTip)
+    .on("click", (ev, d) => { const k = featKey(d); state.sel = state.sel === k ? null : k; state.show = 60; render(); });
+  if (state.level !== "f") paths.attr("stroke-width", state.level === "k" ? 0.25 : 0.1);
+  if (state.level !== "f") gOutline.selectAll("path").data(GEO_F.features).join("path").attr("d", path).attr("fill", "none").attr("stroke", "var(--surface)").attr("stroke-width", 1.2);
+}
+drawMap();
+
+const QS = ["--q1","--q2","--q3","--q4","--q5"];
+const DIV = ["--dn3","--dn2","--dn1","--mid","--dp1","--dp2","--dp3"];
+
+function scaleFor(m) {
+  const vals = Object.values(current).map(a => valOf(a, m)).filter(v => v != null && isFinite(v));
+  if (m === "dlt") {
+    const ext = d3.quantile(vals.map(Math.abs).sort(d3.ascending), 0.9) || 1;
+    const edges = [-ext*0.66, -ext*0.33, -ext*0.05, ext*0.05, ext*0.33, ext*0.66];
+    return { colorOf: v => v == null || !isFinite(v) ? "var(--q0)" : `var(${DIV[edges.filter(e => v > e).length]})`,
+      legend: `<span class="num">${fmtVal(-ext, m, state.rel)}</span>` + DIV.map(q => `<span class="sw" style="background:var(${q})"></span>`).join("") + `<span class="num">${fmtVal(ext, m, state.rel)}</span><span class="sw" style="margin-left:10px;background:var(--q0)"></span><span>ingen data</span>` };
+  }
+  const pos = vals.filter(v => v > 0).sort(d3.ascending);
+  const br = pos.length ? [0.2, 0.4, 0.6, 0.8].map(p => d3.quantile(pos, p)) : [];
+  return { colorOf: v => v == null || v <= 0 ? "var(--q0)" : `var(${QS[br.filter(b => v > b).length]})`,
+    legend: pos.length ? `<span class="num">${fmtVal(pos[0], m, state.rel)}</span>` + QS.map(q => `<span class="sw" style="background:var(${q})"></span>`).join("") + `<span class="num">${fmtVal(pos[pos.length-1], m, state.rel)}</span><span class="sw" style="margin-left:10px;background:var(--q0)"></span><span>ingen</span>` : "" };
+}
+
+
+
+function render() {
+  const rows = baseRows();
+  current = aggregate(rows);
+  const m = state.metric, ml = METRICS.find(x => x.k === m)[state.rel ? "rel" : "abs"];
+  document.getElementById("mapTitle").textContent = ml;
+  const { colorOf, legend } = scaleFor(m);
+  document.getElementById("legend").innerHTML = legend;
+  paths.attr("fill", d => { const a = current[featKey(d)]; return a ? colorOf(valOf(a, m)) : "var(--q0)"; })
+       .classed("on", d => featKey(d) === state.sel);
+
+  const minN = state.level === "k" ? 3 : 0;
+  const ranked = Object.entries(current).map(([k, a]) => ({ k, v: valOf(a, m), n: a.n.cos, txt: both(a, m) }))
+    .filter(d => d.v != null && isFinite(d.v) && d.n >= minN).sort((a, b) => b.v - a.v);
+  const top = state.level !== "k" ? ranked : ranked.slice(0, 8);
+  const bottom = state.level !== "k" ? [] : ranked.slice(-8).filter(d => !top.includes(d));
+  const maxAbs = d3.max(ranked, d => Math.abs(d.v)) || 1;
+  const rk = document.getElementById("rank"); rk.innerHTML = "";
+  const addRow = d => {
+    const b = document.createElement("button"); b.type = "button"; b.className = "row" + (d.k === state.sel ? " on" : "");
+    const w = Math.abs(d.v) / maxAbs * 100;
+    b.innerHTML = `<span>${regionName(d.k)}</span><span><span class="bar" style="width:${w}%;${d.v < 0 ? "background:var(--dn2)" : ""}"></span></span><span class="val num">${d.txt}</span>`;
+    b.onmouseenter = ev => showTip(ev, tipHtml(d.k)); b.onmousemove = moveTip; b.onmouseleave = hideTip;
+    b.onclick = () => { state.sel = state.sel === d.k ? null : d.k; state.show = 60; render(); };
+    rk.appendChild(b);
+  };
+  rk.insertAdjacentHTML("beforeend", `<div class="tag">${state.level === "f" ? "Alle fylker" : state.level === "z" ? "Alle soner" : "Høyest"}</div>`);
+  top.forEach(addRow);
+  if (bottom.length) { rk.insertAdjacentHTML("beforeend", `<div class="tag">Lavest</div>`); bottom.forEach(addRow); }
+  document.getElementById("rankNote").textContent = state.level !== "k" ? ml : `${ml} · minst ${minN} selskaper`;
+
+  const nat = aggregateNational(rows);
+  document.getElementById("kpis").innerHTML = [
+    [`${pct(nat.cos / nat.popCos)} (${nf.format(nat.cos)})`, `av selskapene gikk over til utenlandsk kontroll`, ""],
+    [nf.format(nat.empcos), "av dem har ansatte", ""],
+    [`${pp(nat.dM - nat.dB)} (${dp(nat.dM)})`, "endring i ansatte til 2026 mot hele landet", `${nf.format(Math.round(nat.b))} → ${nf.format(Math.round(nat.a))} ansatte; landet ${dp(nat.dB)}`],
+    [`${pct(nat.own / nat.popOwn)} (${nf.format(nat.own)})`, "av eierne er nye utenlandske kontrollerende eiere", ""],
+    [nf.format(nat.moved), "personlige eiere flyttet utenlands", ""],
+    [`${pct(nat.da / nat.daTot)} (${nok(nat.da)})`, "av all AGA-støtte 2026 går til selskapene (NOK)", ""],
+  ].map(([v, l, s]) => `<div class="kpi"><span class="v num">${v}</span><span class="l">${l}</span>${s ? `<span class="s num">${s}</span>` : ""}</div>`).join("");
+
+  const selRows = rows.filter(r => !state.sel || regionKey(r.kn) === state.sel);
+  const cm = m === "own" ? "own" : (m === "emp" || m === "dlt") ? "emp" : m === "da" ? "da" : "cos";
+  const cVal = { cos: v => v.length, own: v => new Set(v.map(r => r.u + "|" + r.c)).size, emp: v => d3.sum(v, r => r.af), da: v => d3.sum(v, r => r.da || 0) };
+  const cLbl = { cos: "selskaper", own: "eiere", emp: "ansatte 2026", da: "AGA-støtte" };
+  const tot = { cos: cVal.cos(selRows) || 1, emp: cVal.emp(selRows) || 1, own: cVal.own(selRows) || 1, da: cVal.da(selRows) || 1 };
+  const byC = d3.rollups(selRows, v => ({ cos: cVal.cos(v), emp: cVal.emp(v), own: cVal.own(v), da: cVal.da(v),
+      t: new Map(TYPES.map(t => [t.k, cVal[cm](v.filter(r => r.t === t.k))])) }), r => r.c)
+    .sort((a, b) => b[1][cm] - a[1][cm]).slice(0, 10);
+  const cmax = d3.max(byC, d => d[1][cm]) || 1;
+  const cAbs = (v, k) => k === "da" ? nok(v) : nf.format(Math.round(v));
+  document.getElementById("countries").innerHTML = byC.length ? `<div class="row chead"><span></span><span class="note">${cLbl[cm]}</span><span class="note num" style="text-align:right">${cm === "cos" ? "selskaper" : cLbl[cm]}</span><span class="note num" style="text-align:right">${cm === "cos" ? "ansatte" : "selskaper"}</span></div>` + byC.map(([c, o]) => {
+    const other = cm === "cos" ? "emp" : "cos";
+    return `<div class="row" data-c="${c}"><span>${land(c)}</span><span class="stack" style="width:${o[cm] / cmax * 100}%">${TYPES.map(t => o.t.get(t.k) > 0 ? `<span style="background:${t.c};flex:${o.t.get(t.k)}"></span>` : "").join("")}</span><span class="num" style="text-align:right">${pct(o[cm] / tot[cm], 1)} (${cAbs(o[cm], cm)})</span><span class="num" style="text-align:right;color:var(--ink-2)">${pct(o[other] / tot[other], 1)} (${cAbs(o[other], other)})</span></div>`;
+  }).join("") : `<p class="note">Ingen selskaper i utvalget.</p>`;
+  document.querySelectorAll("#countries .row[data-c]").forEach(el => {
+    const o = byC.find(d => d[0] === el.dataset.c)[1];
+    el.onmousemove = ev => showTip(ev, `<b>${land(el.dataset.c)}</b>Selskaper: <span class="num">${pct(o.cos / tot.cos, 1)} (${nf.format(o.cos)})</span><br>Ansatte 2026: <span class="num">${pct(o.emp / tot.emp, 1)} (${nf.format(Math.round(o.emp))})</span><br>AGA-støtte: <span class="num">${pct(o.da / tot.da, 1)} (${nok(o.da)})</span><br>` + TYPES.map(t => `${t.short}: <span class="num">${cAbs(o.t.get(t.k) || 0, cm)}</span>`).join("<br>"));
+    el.onmouseleave = hideTip;
+  });
+  document.getElementById("cNote").textContent = (state.sel ? regionName(state.sel) + " · " : "") + "andel av utvalget (antall), sortert etter " + cLbl[cm];
+  document.getElementById("typeLegend").innerHTML = TYPES.map(t => `<span class="dot" style="background:${t.c}"></span><span>${t.short}</span>`).join("");
+
+  renderYears();
+  const chip = document.getElementById("fyChip");
+  chip.innerHTML = state.sel ? `<span class="chip">${regionName(state.sel)} <button type="button" aria-label="Fjern regionfilter">×</button></span>` : "";
+  if (state.sel) chip.querySelector("button").onclick = () => { state.sel = null; render(); };
+  renderTable();
+}
+
+function aggregateNational(rows) {
+  const a = d3.sum(rows, r => r.af), bb = d3.sum(rows, r => r.b);
+  const knAll = Object.keys(KOM);
+  const bB = baseEmp(knAll, 0), bA = baseEmp(knAll, 1);
+  const popCos = d3.sum(Object.keys(DATA.fylker), f => { const p = DATA.pop["f:" + f] || {}; return d3.sum(years(), y => p[`cos${state.emp ? "_e" : ""}_${y}`] || 0); });
+  const popOwn = d3.sum(Object.keys(DATA.fylker), f => { const p = DATA.pop["f:" + f] || {}; return d3.sum(years(), y => p[`own${state.emp ? "_e" : ""}_${y}`] || 0); });
+  const seen = new Set(); let da = 0; for (const r of rows) if (r.da && !seen.has(r.o)) { seen.add(r.o); da += r.da; }
+  return { cos: rows.length, empcos: rows.filter(r => r.e).length, own: new Set(rows.map(r => r.u + "|" + r.c)).size,
+    moved: new Set(rows.filter(r => r.t === "Eier flyttet utenlands").map(r => r.u)).size,
+    b: bb, a, dM: bb ? (a / bb - 1) * 100 : null, dB: bB ? (bA / bB - 1) * 100 : null,
+    popCos, popOwn, bA26: baseEmp(knAll, 1) / years().length, da, daTot: d3.sum(knAll, k => KOM[k].da || 0) };
+}
+
+function renderYears() {
+  const m = state.metric;
+  const base = DATA.rows.filter(r => (!state.emp || r.e) && (!state.sel || regionKey(r.kn) === state.sel));
+  const keyLbl = state.sel ? regionName(state.sel) : "Hele landet";
+  const denom = y => {
+    if (!state.sel) return d3.sum(Object.keys(DATA.fylker), f => { const p = DATA.pop["f:" + f] || {}; return p[`${m === "own" ? "own" : "cos"}${state.emp ? "_e" : ""}_${y}`] || 0; });
+    return d3.sum(popObjs(state.sel), p => p[`${m === "own" ? "own" : "cos"}${state.emp ? "_e" : ""}_${y}`] || 0);
+  };
+  const knrs = state.sel ? knrsOf(state.sel) : Object.keys(KOM);
+  const val = (rs, y) => {
+    if (m === "emp" || m === "dlt") {
+      const b = d3.sum(rs, r => r.b), a = d3.sum(rs, r => r.af);
+      if (m === "dlt") { const s = [String(y), "2026"]; const bb = d3.sum(knrs, k => (DATA.base_hist[k] || {})[s[0]] || 0), ba = d3.sum(knrs, k => (DATA.base_hist[k] || {})[s[1]] || 0); const dm = b ? (a / b - 1) * 100 : null, db = bb ? (ba / bb - 1) * 100 : null; return state.rel ? (dm != null && db != null ? dm - db : null) : dm; }
+      if (!state.rel) return a; const s = "2026"; const t = d3.sum(knrs, k => (DATA.base_hist[k] || {})[s] || 0); return t ? a / t : null;
+    }
+    if (m === "da") { const v = d3.sum(rs, r => r.da || 0); if (!state.rel) return v; const t = d3.sum(knrs, k => (KOM[k] || {}).da || 0); return t ? v / t : null; }
+    const v = m === "own" ? new Set(rs.map(r => r.u + "|" + r.c)).size : rs.length;
+    if (!state.rel) return v; const d = denom(y); return d ? v / d : null;
+  };
+  const yv = TYPES.map(t => ({ t, v: [2024, 2025].map(y => val(base.filter(r => r.t === t.k && r.y === y), y)),
+    ab: [2024, 2025].map(y => { state.rel = false; const x = val(base.filter(r => r.t === t.k && r.y === y), y); state.rel = true; return x; }) }));
+  const ymax = d3.max(yv.flatMap(d => d.v.map(x => Math.abs(x || 0)))) || 1;
+  document.getElementById("years").innerHTML = yv.map(d => `<div class="row"><span>${d.t.k}</span><div class="pair">${[2024, 2025].map((y, i) => `<div class="b"><span class="num">${y}</span><span><i style="width:${Math.abs(d.v[i] || 0) / ymax * 100}%;background:${(d.v[i] || 0) < 0 ? "var(--dn2)" : d.t.c};opacity:${i ? 1 : .55}"></i></span><span class="num" style="text-align:right">${fmtVal(d.v[i], m, true)} (${absTxt(d.ab[i], m)})</span></div>`).join("")}</div></div>`).join("");
+  document.getElementById("yrNote").textContent = `${keyLbl} · ${METRICS.find(x => x.k === m)[state.rel ? "rel" : "abs"].toLowerCase()}`;
+}
+
+const COLS = [
+  { k: "y", l: "År", r: true }, { k: "t", l: "Type" }, { k: "n", l: "Selskap" }, { k: "kn", l: "Kommune" },
+  { k: "z", l: "AGA-sone (hovedenhet)" }, { k: "e2024", l: "Ansatte 2024", r: true }, { k: "e2025", l: "Ansatte 2025", r: true }, { k: "e2026", l: "Ansatte 2026", r: true }, { k: "dp", l: "Endring", r: true },
+  { k: "da", l: "AGA-støtte 2026", r: true }, { k: "u", l: "Kontrollerende eier" }, { k: "c", l: "Land" }, { k: "pct", l: "Andel", r: true }, { k: "gn", l: "Norsk konserntopp" },
+];
+for (const r of DATA.rows) {
+  r.z = r.kn ? zoneOf(r.kn) : ""; r.km = r.kn && KOM[r.kn] ? KOM[r.kn].n : "";
+  const h = DATA.emp_hist[r.o] || {};
+  const zs = new Set(); for (const y in h) for (const [k, n] of h[y]) if (k && n > 0) zs.add(zoneOf(k));
+  r.zu = [...zs].filter(z => z !== r.z).sort();
+}
+const thead = document.getElementById("thead");
+COLS.forEach(c => { const th = document.createElement("th"); if (c.r) th.className = "r"; const b = document.createElement("button"); b.type = "button"; b.textContent = c.l; b.onclick = () => { state.sort = { k: c.k, dir: state.sort.k === c.k ? -state.sort.dir : (c.r ? -1 : 1) }; renderTable(); }; th.appendChild(b); thead.appendChild(th); });
+
+function renderTable() {
+  let rows = baseRows().filter(r => !state.sel || regionKey(r.kn) === state.sel);
+  if (state.q) rows = rows.filter(r => [r.n, r.o, r.km, r.u, land(r.c), r.gn, r.g].join(" ").toLowerCase().includes(state.q));
+  const { k, dir } = state.sort;
+  const key = k === "kn" ? "km" : k;
+  rows.sort((a, b) => { const x = a[key], y = b[key]; if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1; return (x > y ? 1 : x < y ? -1 : 0) * dir; });
+  document.getElementById("rowCount").textContent = `${nf.format(rows.length)} rader`;
+  [...thead.children].forEach((th, i) => th.setAttribute("aria-sort", COLS[i].k === k ? (dir > 0 ? "ascending" : "descending") : "none"));
+  const snapLbl = y => "Snitt " + DATA.emp_snaps[y].map(s => s.split("-").reverse().join(".")).join(" og ");
+  const en = v => nf.format(Math.round(v));
+  document.getElementById("tbody").innerHTML = rows.slice(0, state.show).map(r => `<tr>
+    <td class="r num">${r.y}</td>
+    <td><span class="pill"><span class="dot" style="background:${TYPEC[r.t]}"></span>${r.t}</span></td>
+    <td>${r.n || "–"}<div class="muted num">${r.o}</div></td>
+    <td>${r.km || "–"}<div class="muted">${DATA.fylker[r.f] || ""}</div></td>
+    <td>${r.z || "–"}${r.z ? `<div class="muted">${RATE[r.z]}</div>` : ""}${r.zu.length ? `<div class="muted" title="Underenheter med ansatte i andre soner">+ ansatte i sone ${r.zu.join(", ")}</div>` : ""}</td>
+    <td class="r num" title="${snapLbl("2024")}">${en(r.e2024)}</td>
+    <td class="r num" title="${snapLbl("2025")}">${en(r.e2025)}</td>
+    <td class="r num" title="${snapLbl("2026")}">${en(r.e2026)}</td>
+    <td class="r num" title="Fra ${r.y} til 2026">${dp(r.dp)}</td>
+    <td class="r num"><a class="lk" href="${STOTTE(r.o)}" target="_blank" rel="noopener" title="Slå opp i Støtteregisteret">${r.da ? nok(r.da) : "slå opp"}</a></td>
+    <td>${r.u}<div class="muted">${r.p ? "person" : "selskap"}</div></td>
+    <td>${land(r.c)}</td>
+    <td class="r num">${r.pct != null ? r.pct.toFixed(0) + " %" : "–"}</td>
+    <td>${r.d > 0 ? (r.gn || r.g) + `<div class="muted num">${r.g} · ${r.d} ${r.d === 1 ? "nivå" : "nivåer"} opp</div>` : `<span class="muted">selskapet selv</span>`}</td>
+  </tr>`).join("");
+  const more = document.getElementById("more");
+  more.hidden = rows.length <= state.show;
+  more.textContent = `Vis flere (${nf.format(Math.min(100, rows.length - state.show))} av ${nf.format(rows.length - state.show)} gjenstående)`;
+}
+document.getElementById("more").onclick = () => { state.show += 100; renderTable(); };
+render();
+</script>
